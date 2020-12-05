@@ -11,4 +11,56 @@
 // "white" in every pixel;
 // the screen should remain fully clear as long as no key is pressed.
 
-// Put your code here.
+// PSEUDOCODE
+//  while (true)
+//      if (KBD === 0)
+//          for (register in 256 * 32 = 8192 SCREEN registers)
+//              register = 0
+//      else 
+//          for (register in 256 * 32 = 8192 SCREEN registers)
+//              register = -1
+
+(LOOP)
+    @count
+    M=0
+    @KBD
+    D=M
+    @WHITE
+    D;JEQ   // if (KBD === 0)
+    @BLACK
+    0;JMP   // else
+
+(WHITE)
+    @color
+    M=0
+    @DRAW
+    0;JMP
+
+(BLACK)
+    @color
+    M=-1
+    @DRAW
+    0;JMP
+
+(DRAW)
+    @count
+    D=M
+    @8192
+    D=A-D
+    @LOOP
+    D;JLE
+    @count
+    D=M
+    @SCREEN
+    D=D+A
+    @pos
+    M=D
+    @color
+    D=M
+    @pos
+    A=M
+    M=D
+    @count
+    M=M+1
+    @DRAW
+    0;JMP
