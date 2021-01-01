@@ -68,6 +68,12 @@ public:
         commands["not"] = C_ARITHMETIC;
         commands["push"] = C_PUSH;
         commands["pop"] = C_POP;
+        commands["call"] = C_CALL;
+        commands["function"] = C_FUNCTION;
+        commands["return"] = C_RETURN;
+        commands["label"] = C_LABEL;
+        commands["goto"] = C_GOTO;
+        commands["if-goto"] = C_IF;
 
         return commands.find(m_line.substr(0, m_line.find(" ")))->second;
     }
@@ -212,10 +218,11 @@ M=!M)" << endl;
 
     void writePushPop(const CommandType &cmd, const string &segment, const string &index)
     {
+        m_file << "// " << (cmd == C_PUSH ? "push" : "pop") << " " << segment << endl;
+
         if (cmd == C_PUSH && segment == "constant")
         {
-            m_file << "// push constant\n@" + index +
-                          R"(
+            m_file << "@" << index << R"(
 D=A
 @SP
 AM=M+1
@@ -225,9 +232,7 @@ M=D)" << endl;
         }
         else if (cmd == C_PUSH && segment == "static")
         {
-            m_file << "// push static\n@" + m_filename + "." +
-                          index +
-                          R"(
+            m_file << "@" << m_filename << "." << index << R"(
 D=M
 @SP
 AM=M+1
@@ -237,8 +242,7 @@ M=D)" << endl;
         }
         else if (cmd == C_PUSH && (segment == "pointer" || segment == "temp"))
         {
-            m_file << "// push " << segment << endl
-                   << "@R" << to_string(stoi(index) + (segment == "pointer" ? 3 : 5)) << R"(
+            m_file << "@R" << to_string(stoi(index) + (segment == "pointer" ? 3 : 5)) << R"(
 D=M
 @SP
 AM=M+1
@@ -248,11 +252,10 @@ M=D)" << endl;
         }
         else if (cmd == C_PUSH)
         {
-            m_file << "// push\n@" + index +
-                          R"(
+            m_file << "@" << index << R"(
 D=A
-@)" + m_symbols.find(segment)->second +
-                          R"(
+@)" << m_symbols.find(segment)->second
+                   << R"(
 A=D+M
 D=M
 @SP
@@ -263,35 +266,30 @@ M=D)" << endl;
         }
         else if (cmd == C_POP && segment == "static")
         {
-            m_file << R"(// pop static
-@SP
+            m_file << R"(@SP
 AM=M-1
 D=M
-@)" + m_filename +
-                          "." +
-                          index +
-                          "\nM=D"
-                   << endl;
+@)" << m_filename << "."
+                   << index << endl
+                   << "M=D" << endl;
             return;
         }
         else if (cmd == C_POP && (segment == "pointer" || segment == "temp"))
         {
-            m_file << "// pop " << segment << endl
-                   << R"(@SP
+            m_file << R"(@SP
 AM=M-1
 D=M
-@R)" + to_string(stoi(index) + (segment == "pointer" ? 3 : 5)) +
-                          R"(
-M=D)" << endl;
+@R)" << to_string(stoi(index) + (segment == "pointer" ? 3 : 5))
+                   << endl
+                   << "M=D" << endl;
             return;
         }
         else if (cmd == C_POP)
         {
-            m_file << "// pop\n@" + index +
-                          R"(
+            m_file << "@" << index << R"(
 D=A
-@)" + m_symbols.find(segment)->second +
-                          R"(
+@)" << m_symbols.find(segment)->second
+                   << R"(
 D=D+M
 @R13
 M=D
@@ -305,7 +303,131 @@ M=D)" << endl;
         }
     }
 
+    void writeInit()
+    {
+        m_file << R"(@256
+D=A
+@SP
+M=D
+)";
+        writeCall("Sys.init", 0);
+    }
+
+    void writeLabel(const string &label)
+    {
+        m_file << "(" << label << ")" << endl;
+    }
+
+    void writeGoto(const string &label)
+    {
+        m_file << "// goto " << label << endl
+               << "@" << label << endl
+               << "0;JMP" << endl;
+    }
+
+    void writeIf(const string &label)
+    {
+        m_file << "// if-goto " << label << R"(
+@SP
+AM=M-1
+D=M
+@)" << label << endl
+               << "D;JNE" << endl;
+    }
+
+    void writeCall(const string &functionName, int numArgs)
+    {
+        m_count++;
+        const string retAddress = "RETURN_ADDRESS_" + to_string(m_count);
+        pushAddress(retAddress);
+        pushData("LCL");
+        pushData("ARG");
+        pushData("THIS");
+        pushData("THAT");
+        setAddress("ARG", "SP", -5 - numArgs);
+        setAddress("LCL", "SP");
+        writeGoto(functionName);
+        writeLabel(retAddress);
+    }
+
+    void writeReturn()
+    {
+        setAddress("R15", "LCL");
+        setData("R14", "R15", -5);
+        writePushPop(C_POP, "argument", "0");
+        setAddress("SP", "ARG", 1);
+        setData("THAT", "R15", -1);
+        setData("THIS", "R15", -2);
+        setData("ARG", "R15", -3);
+        setData("LCL", "R15", -4);
+        m_file << R"(@R14
+A=M
+0;JMP)" << endl;
+    }
+
+    void writeFunction(const string &functionName, int numLocals)
+    {
+        writeLabel(functionName);
+        for (size_t i = 0; i < numLocals; i++)
+        {
+            writePushPop(C_PUSH, "constant", "0");
+        }
+    }
+
+    void setFileName(const string &filename)
+    {
+        m_filename = filename;
+    }
+
 private:
+    void pushAddress(const string &label)
+    {
+        m_file << "@" << label <<
+            R"(
+D=A
+@SP
+AM=M+1
+A=A-1
+M=D)" << endl;
+    }
+
+    void pushData(const string &label)
+    {
+        m_file << "@" << label << R"(
+D=M
+@SP
+AM=M+1
+A=A-1
+M=D)" << endl;
+    }
+
+    void setAddress(const string &dest, const string &address, int offset = 0)
+    {
+        bool pos = offset > 0;
+        offset = abs(offset);
+
+        m_file << "@" << to_string(offset) << endl
+               << "D=A" << endl
+               << "@" << address << endl
+               << (pos ? "D=D+M" : "D=M-D") << endl
+               << "@" << dest << endl
+               << "M=D" << endl;
+    }
+
+    void setData(const string &dest, const string &address, int offset = 0)
+    {
+        bool pos = offset > 0;
+        offset = abs(offset);
+
+        m_file << "@" << to_string(offset) << endl
+               << "D=A" << endl
+               << "@" << address << endl
+               << (pos ? "A=D+M" : "A=M-D") << endl
+               << "D=M" << endl
+               << "@" << dest << endl
+               << "M=D" << endl;
+    }
+
     string getComparisonSnippet(const string &label, const string &jump)
     {
         return R"(@SP
@@ -335,19 +457,9 @@ M=)" + line;
     }
 };
 
-int main(int argc, char **argv)
+void handleFile(const string &vmFilePath, CodeWriter &codeWriter)
 {
-
-    if (argc != 2)
-    {
-        cout << "Invalid argument: specify path to .vm file" << endl;
-        return -1;
-    }
-
-    string vmFilePath = argv[1];
     Parser parser(vmFilePath);
-    string asmFilePath = vmFilePath.substr(0, vmFilePath.find_last_of(".")) + ".asm";
-    CodeWriter codeWriter(asmFilePath);
 
     while (parser.hasMoreCommands())
     {
@@ -361,8 +473,69 @@ int main(int argc, char **argv)
         {
             codeWriter.writePushPop(cType, parser.arg1(), parser.arg2());
         }
+        else if (cType == C_CALL)
+        {
+            codeWriter.writeCall(parser.arg1(), stoi(parser.arg2()));
+        }
+        else if (cType == C_FUNCTION)
+        {
+            codeWriter.writeFunction(parser.arg1(), stoi(parser.arg2()));
+        }
+        else if (cType == C_GOTO)
+        {
+            codeWriter.writeGoto(parser.arg1());
+        }
+        else if (cType == C_IF)
+        {
+            codeWriter.writeIf(parser.arg1());
+        }
+        else if (cType == C_LABEL)
+        {
+            codeWriter.writeLabel(parser.arg1());
+        }
+        else if (cType == C_RETURN)
+        {
+            codeWriter.writeReturn();
+        }
 
         parser.advance();
+    }
+}
+
+int main(int argc, char **argv)
+{
+
+    if (argc != 2)
+    {
+        cout << "Invalid argument: specify path to .vm file" << endl;
+        return -1;
+    }
+
+    if (filesystem::is_directory(argv[1]))
+    {
+        string asmFilePath = (string)argv[1] + "/" + (string)filesystem::path(argv[1]).filename() + ".asm";
+        CodeWriter codeWriter(asmFilePath);
+        codeWriter.writeInit();
+
+        auto directories = filesystem::directory_iterator(argv[1]);
+        for (const auto &entry : directories)
+        {
+            if (entry.path().extension() == ".vm")
+            {
+                codeWriter.setFileName(entry.path().filename());
+                handleFile(entry.path().string(), codeWriter);
+            }
+        }
+    }
+    else
+    {
+        string vmFilePath = argv[1];
+        string asmFilePath = vmFilePath.substr(0, vmFilePath.find_last_of(".")) + ".asm";
+
+        CodeWriter codeWriter(asmFilePath);
+        codeWriter.writeInit();
+
+        handleFile(vmFilePath, codeWriter);
     }
 
     return 0;
