@@ -4,6 +4,8 @@
 #include <set>
 #include <regex>
 #include <unordered_map>
+#include <filesystem>
+#include "./pugixml.hpp"
 
 using namespace std;
 
@@ -72,6 +74,7 @@ public:
         if (m_extractIndex == string::npos)
         {
             m_file >> m_extract;
+            m_file >> ws;
             m_extractIndex = 0;
         }
 
@@ -97,6 +100,11 @@ public:
             m_token = m_extract.substr(m_extractIndex, end - m_extractIndex);
             m_extractIndex = end;
         }
+    }
+
+    string token()
+    {
+        return m_token;
     }
 
     TokenType tokenType()
@@ -228,6 +236,432 @@ private:
     }
 };
 
+class CompilationEngine
+{
+private:
+    Tokenizer *tokenizer;
+    pugi::xml_node node;
+
+public:
+    CompilationEngine(Tokenizer *tokenizer, pugi::xml_document &doc)
+    {
+        this->tokenizer = tokenizer;
+        this->node = doc;
+    }
+
+    void compileClass()
+    {
+        if (tokenizer->keyWord() == Keyword::CLASS)
+        {
+            auto tmpNode = node;
+            node = node.append_child("class");
+
+            compileKeyword();
+            compileIdentifier();
+            compileSymbol();
+
+            while (tokenizer->keyWord() == Keyword::STATIC || tokenizer->keyWord() == Keyword::FIELD)
+            {
+                compileClassVarDec();
+            }
+
+            while (tokenizer->keyWord() == Keyword::CONSTRUCTOR || tokenizer->keyWord() == Keyword::FUNCTION || tokenizer->keyWord() == Keyword::METHOD)
+            {
+                compileSubroutineDec();
+            }
+
+            compileSymbol();
+            node = tmpNode;
+        }
+    }
+
+    void compileClassVarDec()
+    {
+        auto tmpNode = node;
+        node = node.append_child("classVarDec");
+        compileKeyword();
+        compileType();
+        compileIdentifier();
+
+        while (tokenizer->symbol() == ',')
+        {
+            compileSymbol();
+            compileIdentifier();
+        }
+
+        compileSymbol();
+        node = tmpNode;
+    }
+
+    void compileSubroutineDec()
+    {
+        auto tmpNode = node;
+        node = node.append_child("subroutineDec");
+        compileKeyword();
+        compileType();
+        compileIdentifier();
+        compileSymbol();
+        compileParameterList();
+        compileSymbol();
+
+        node = node.append_child("subroutineBody");
+        compileSymbol();
+        while (tokenizer->keyWord() == Keyword::VAR)
+        {
+            compileVarDec();
+        }
+        compileStatements();
+        compileSymbol();
+
+        node = tmpNode;
+    }
+
+    void compileParameterList()
+    {
+        auto tmpNode = node;
+        node = node.append_child("parameterList");
+
+        if (isType())
+        {
+            compileType();
+            compileIdentifier();
+
+            while (tokenizer->symbol() == ',')
+            {
+                compileSymbol();
+                compileType();
+                compileIdentifier();
+            }
+        }
+
+        node = tmpNode;
+    }
+
+    void compileVarDec()
+    {
+        auto tmpNode = node;
+        node = node.append_child("varDec");
+
+        compileKeyword();
+        compileType();
+        compileIdentifier();
+
+        while (tokenizer->symbol() == ',')
+        {
+            compileSymbol();
+            compileIdentifier();
+        }
+
+        compileSymbol();
+        node = tmpNode;
+    }
+
+    void compileStatements()
+    {
+        auto tmpNode = node;
+        node = node.append_child("statements");
+
+        while (tokenizer->tokenType() == TokenType::KEYWORD)
+        {
+            switch (tokenizer->keyWord())
+            {
+            case Keyword::IF:
+                compileIf();
+                break;
+
+            case Keyword::DO:
+                compileDo();
+                break;
+
+            case Keyword::WHILE:
+                compileWhile();
+                break;
+
+            case Keyword::RETURN:
+                compileReturn();
+                break;
+
+            case Keyword::LET:
+                compileLet();
+                break;
+
+            default:
+                break;
+            }
+        }
+
+        node = tmpNode;
+    }
+
+    void compileDo()
+    {
+        auto tmpNode = node;
+        node = node.append_child("doStatement");
+
+        compileKeyword();
+        compileSubroutineCall();
+        compileSymbol();
+        node = tmpNode;
+    }
+
+    void compileLet()
+    {
+        auto tmpNode = node;
+        node = node.append_child("letStatement");
+
+        compileKeyword();
+        compileIdentifier();
+
+        if (tokenizer->symbol() == '[')
+        {
+            compileSymbol();
+            compileExpression();
+            compileSymbol();
+        }
+
+        compileSymbol();
+        compileExpression();
+        compileSymbol();
+        node = tmpNode;
+    }
+
+    void compileWhile()
+    {
+        auto tmpNode = node;
+        node = node.append_child("whileStatement");
+
+        compileKeyword();
+
+        compileSymbol();
+        compileExpression();
+        compileSymbol();
+
+        compileSymbol();
+        compileStatements();
+        compileSymbol();
+
+        node = tmpNode;
+    }
+
+    void compileReturn()
+    {
+        auto tmpNode = node;
+        node = node.append_child("returnStatement");
+
+        compileKeyword();
+
+        if (tokenizer->symbol() != ';')
+        {
+            compileExpression();
+        }
+
+        compileSymbol();
+
+        node = tmpNode;
+    }
+
+    void compileIf()
+    {
+        auto tmpNode = node;
+        node = node.append_child("ifStatement");
+
+        compileKeyword();
+        compileSymbol();
+        compileExpression();
+        compileSymbol();
+
+        compileSymbol();
+        compileStatements();
+        compileSymbol();
+
+        if (tokenizer->keyWord() == Keyword::ELSE)
+        {
+            compileKeyword();
+            compileSymbol();
+            compileStatements();
+            compileSymbol();
+        }
+
+        node = tmpNode;
+    }
+
+    void compileExpression()
+    {
+        auto tmpNode = node;
+        node = node.append_child("expression");
+
+        compileTerm();
+
+        while (isOp())
+        {
+            compileSymbol();
+            compileTerm();
+        }
+
+        node = tmpNode;
+    }
+
+    void compileTerm()
+    {
+        auto tmpNode = node;
+        node = node.append_child("term");
+
+        switch (tokenizer->tokenType())
+        {
+        case TokenType::IDENTIFIER:
+        {
+            compileIdentifier();
+            char symbol = tokenizer->symbol();
+            if (symbol == '[')
+            {
+                compileSymbol();
+                compileExpression();
+                compileSymbol();
+            }
+            else if (symbol == '(' || symbol == '.')
+            {
+                compileSubroutineCall(false);
+            }
+            break;
+        }
+
+        case TokenType::STRING_CONST:
+        {
+            auto token = node.append_child("stringConstant");
+            token.text().set(tokenizer->stringVal().c_str());
+            tokenizer->advance();
+            break;
+        }
+
+        case TokenType::SYMBOL:
+        {
+            char symbol = tokenizer->symbol();
+            if (symbol == '-' || symbol == '~')
+            {
+                compileSymbol();
+                compileTerm();
+            }
+            else
+            {
+                compileSymbol();
+                compileExpression();
+                compileSymbol();
+            }
+            break;
+        }
+
+        case TokenType::INT_CONST:
+        {
+            auto token = node.append_child("integerConstant");
+            token.text().set(tokenizer->token().c_str());
+            tokenizer->advance();
+            break;
+        }
+
+        case TokenType::KEYWORD:
+        {
+            compileKeyword();
+            break;
+        }
+        }
+
+        node = tmpNode;
+    }
+
+    void compileExpressionList()
+    {
+        auto tmpNode = node;
+        node = node.append_child("expressionList");
+
+        if (tokenizer->symbol() != ')')
+        {
+            compileExpression();
+        }
+
+        while (tokenizer->symbol() == ',')
+        {
+            compileSymbol();
+            compileExpression();
+        }
+
+        node = tmpNode;
+    }
+
+private:
+    void compileSubroutineCall(bool withIdentifier = true)
+    {
+        if (withIdentifier)
+        {
+            compileIdentifier();
+        }
+
+        if (tokenizer->symbol() == '.')
+        {
+            compileSymbol();
+            compileIdentifier();
+        }
+
+        compileSymbol();
+        compileExpressionList();
+        compileSymbol();
+    }
+
+    bool isOp()
+    {
+        auto symbol = tokenizer->symbol();
+        return symbol == '+' || symbol == '-' || symbol == '*' || symbol == '/' || symbol == '&' || symbol == '|' || symbol == '<' || symbol == '>' || symbol == '=';
+    }
+
+    bool isType()
+    {
+        auto type = tokenizer->keyWord();
+        return type == Keyword::INT || type == Keyword::BOOLEAN || type == Keyword::CHAR || tokenizer->tokenType() == TokenType::IDENTIFIER;
+    }
+
+    void compileType()
+    {
+        if (tokenizer->tokenType() == TokenType::IDENTIFIER)
+        {
+            compileIdentifier();
+        }
+        else
+        {
+            compileKeyword();
+        }
+    }
+
+    void compileKeyword()
+    {
+        auto keywordNode = node.append_child("keyword");
+        keywordNode.text().set(tokenizer->token().c_str());
+        tokenizer->advance();
+    }
+
+    void compileSymbol()
+    {
+        auto symbolNode = node.append_child("symbol");
+        symbolNode.text().set(tokenizer->token().c_str());
+        tokenizer->advance();
+    }
+
+    void compileIdentifier()
+    {
+        auto identifierNode = node.append_child("identifier");
+        identifierNode.text().set(tokenizer->identifier().c_str());
+        tokenizer->advance();
+    }
+};
+
+void createXml(const string &jackFilePath, const string &syntaxTreePath)
+{
+    Tokenizer tokenizer(jackFilePath);
+    pugi::xml_document doc;
+    CompilationEngine compiler(&tokenizer, doc);
+    tokenizer.advance();
+    compiler.compileClass();
+    doc.save_file(syntaxTreePath.c_str(), "\t", pugi::format_indent | pugi::format_no_declaration | pugi::format_no_empty_element_tags);
+}
+
 int main(int argc, char **argv)
 {
 
@@ -237,12 +671,24 @@ int main(int argc, char **argv)
         return -1;
     }
 
-    string jackFilePath = argv[1];
-    Tokenizer tokenizer(jackFilePath);
-
-    while (tokenizer.hasMoreTokens())
+    if (filesystem::is_directory(argv[1]))
     {
-        tokenizer.advance();
+        auto directories = filesystem::directory_iterator(argv[1]);
+        for (const auto &entry : directories)
+        {
+            if (entry.path().extension() == ".jack")
+            {
+                string jackFilePath = entry.path();
+                string syntaxTreePath = jackFilePath.substr(0, jackFilePath.find_last_of(".")) + "SyntaxTree.xml";
+                createXml(jackFilePath, syntaxTreePath);
+            }
+        }
+    }
+    else
+    {
+        string jackFilePath = argv[1];
+        string syntaxTreePath = jackFilePath.substr(0, jackFilePath.find_last_of(".")) + "SyntaxTree.xml";
+        createXml(jackFilePath, syntaxTreePath);
     }
 
     return 0;
