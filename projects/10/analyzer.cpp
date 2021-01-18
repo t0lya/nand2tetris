@@ -84,7 +84,8 @@ public:
         {
             string tail;
             getline(m_file, tail, '"');
-            m_token = m_extract.substr(m_extractIndex) + tail + "\"";
+            // TODO: Investigate skipped whitespace between extracts
+            m_token = m_extract.substr(m_extractIndex) + " " + tail + "\"";
             m_extractIndex = string::npos;
             return;
         }
