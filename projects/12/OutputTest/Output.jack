@@ -183,20 +183,21 @@ class Output {
     /** Moves the cursor to the j-th column of the i-th row,
      *  and erases the character displayed there. */
     function void moveCursor(int i, int j) {
-        var int address, maxAdress, oldValue, mask;        
+        var int address, i, oldValue, mask;        
 
-        let cursor = (704 * i) + j;
-        let address = Output.cursorToAddress(cursor);
-        let maxAdress = address + 321;
+        let cursor = (64 * i) + j;
+        let address = Output.cursorToAddress();
+        let i = 0;
         let mask = 255;
         if ((cursor & 1) = 0) {
             let mask = -257;
         }
 
-        while (address < maxAdress) {
+        while (i < 11) {
             let oldValue = Memory.peek(address);
             do Memory.poke(address, oldValue & mask);
             let address = address + 32;
+            let i = i + 1;
         }
 
         return;
@@ -205,25 +206,31 @@ class Output {
     /** Displays the given character at the cursor location,
      *  and advances the cursor one column forward. */
     function void printChar(char c) {
-        var int address, i, oldValue, newValue;
+        var int address, i, oldValue, newValue, mask;
         var Array charMap;
 
         let i = 0;
-        let address = Output.cursorToAddress(cursor);
+        let address = Output.cursorToAddress();
 
         while (i < 11) {
             let oldValue = Memory.peek(address);
             let charMap = Output.getMap(c);
             let newValue = charMap[i];
+            let mask = -64;
             if ((cursor & 1) = 1) {
                 let newValue = newValue * 256;
+                let mask = 63;
             }
-            do Memory.poke(address, oldValue | newValue);
+            do Memory.poke(address, (oldValue & mask) | newValue);
             let address = address + 32;
             let i = i + 1;
         }
 
-        let cursor = cursor + 1;
+        if (cursor = 1471) {
+            let cursor = 0;
+        } else {
+            let cursor = cursor + 1;
+        }
 
         return;
     }
@@ -237,7 +244,7 @@ class Output {
         let i = 0;
 
         while (i < length) {
-            do Output.printChar(s[i]);
+            do Output.printChar(s.charAt(i));
             let i = i + 1;
         }
 
@@ -258,7 +265,10 @@ class Output {
 
     /** Advances the cursor to the beginning of the next line. */
     function void println() {
-        let cursor = cursor | 64;
+        var int tmp;
+
+        let tmp = (cursor | 63) + 1;
+        let cursor = tmp - ((tmp / 1471) * 1471);
 
         return;
     }
@@ -270,11 +280,13 @@ class Output {
         }
 
         let cursor = cursor - 1;
+        do Output.printChar(32);
+        let cursor = cursor - 1;
 
         return;
     }
 
-    function cursorToAddress(int csr) {
-        return screen + (352 * (cursor / 64)) + ((cursor & 64) / 2);
+    function int cursorToAddress() {
+        return screen + (352 * (cursor / 64)) + ((cursor & 63) / 2);
     }
 }
